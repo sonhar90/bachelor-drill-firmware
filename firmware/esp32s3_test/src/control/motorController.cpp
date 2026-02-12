@@ -5,14 +5,14 @@ const int motorChAPin = 5;
 const int motorChBPin = 6;
 const int motorPWMPin = 7;
 
-const int PWM_CH = 0;          // ledc kanal 0-7 (C3 har flere)
-const int PWM_FREQ = 50000;    // 50 kHz
-const int PWM_RES_BITS = 8;    // 0..255
+const int PWM_CH = 0;
+const int PWM_FREQ = 5000;
+const int PWM_RES_BITS = 8;
 
 float motorPercentage = 0.0;
 float percentageChange = 0.02;
 bool rising = true;
-int duty;
+int duty = 0;
 
 void motorSetup(){
   pinMode(motorChAPin, OUTPUT);
@@ -43,6 +43,9 @@ void controlMotor(){
   }
   else if (motorPercentage > 0.0){
     duty = int(255*motorPercentage);
+  }
+  else{
+    duty = 0;
   }
 
   duty = constrain(duty, 0, 255);

@@ -9,8 +9,14 @@ long encCount = 0;
 long encCountChange = 0;
 long lastEncCount = 0;
 
+const float GEAR_RATIO = 231.0;
+
+
 float radPerSec = 0.0;
 float degPerSec = 0.0;
+float rpm = 0.0;          // motor rpm
+float rpmChuck = 0.0;     // chuck rpm
+
 
 const float PPR = 1024.0;
 const float CPR = PPR*1;
@@ -39,15 +45,23 @@ void encoderSetup(){
 
 void runEncoder(){
   t = millis();
-  dt = (t - lastMillis) / 1000.0;
 
-  if (dt > 0.0) {
+  // oppdater rpm hvert 100 ms i stedet for hver loop
+  if (t - lastMillis >= 100) {
+
+    dt = (t - lastMillis) / 1000.0;
+
     encCountChange = encCount - lastEncCount;
 
     radPerSec = encCountChange * radPerCount / dt;
     degPerSec = encCountChange * degPerCount / dt;
 
+    rpm = radPerSec * 60.0 / (2.0 * 3.14159);
+    rpmChuck = rpm / GEAR_RATIO;
+
+
     lastEncCount = encCount;
     lastMillis = t;
   }
 }
+
