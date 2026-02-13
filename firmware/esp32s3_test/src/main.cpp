@@ -24,7 +24,8 @@ void setup() {
   loadcell.tare();
 
   // CSV HEADER – MÅ være første linje
-  Serial.println("time_ms,rpm_motor,rpm_chuck,current_A,voltage_V,grams,torque_measured_Nm,torque_est_Nm");
+  Serial.println("time_ms,rpm_motor,rpm_chuck,current_A,voltage_V,grams,torque_measured_Nm,torque_est_Nm,omega_chuck,power_mech");
+
 
 
   // Litt delay før tekst
@@ -56,7 +57,7 @@ void loop(){
 
     float grams = loadcell.readGrams(countsPerGram, 10);
 
-    calculateTorque(grams);
+    calculateTorqueMeasured(grams);
 
     // CSV DATA
     Serial.print(millis());
@@ -80,7 +81,13 @@ void loop(){
     Serial.print(torque_measured);
     Serial.print(",");
 
-    Serial.println(torque_est);
+    Serial.print(torque_est);
+    Serial.print(",");
+    Serial.print(omega_chuck);
+    Serial.print(",");
+    Serial.println(power_mech);  // mekanisk effekt i W
+
+    
 
 
     controlMotor();

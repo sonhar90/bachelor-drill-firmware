@@ -1,66 +1,58 @@
 #include <Arduino.h>
+#include <math.h>
+#include "calculateTorqueFile.h"
 #include "encoderCode.h"
 #include "currentSens.h"
-#include "calculateTorqueFile.h"
 
-float powerOut = 0.0;
-float torque_est = 0.0;
-float torque_measured = 0.0;
+float torque_est = 0.0f;
+float torque_measured = 0.0f;
 
-const float ETA_MOTOR = 0.55;
-const float GEAR_RATIO = 231.0;
-const float ARM_LENGTH = 0.05;   // 5 cm
+float grams_f = 0.0f;
+float force_N = 0.0f;
 
-const float P_IDLE = 8.9;  // watt, målt fra tomgang
+float omega_chuck = 0.0f;
+float power_mech = 0.0f;
 
-void calculateTorque(float grams){
+static constexpr float G = 9.81f;
+static constexpr float ARM_LENGTH = 0.05f;
 
-  // ----- MÅLT TORQUE FRA LASTCELLE -----
-  float force_N = (grams / 1000.0) * 9.81;
+static constexpr float KT = 0.010f;
+static constexpr float GEAR_RATIO = 231.0f;
+
+
+void calculateTorqueMeasured(float grams)
+{
+  // deadband for lastcelle
+  if (fabs(grams) < 10.0f) {   // < 5 gram = støy
+    grams = 0.0f;
+  }
+
+  grams_f = grams;
+
+  force_N = (grams / 1000.0f) * G;
   torque_measured = force_N * ARM_LENGTH;
 
-  // ----- ESTIMERT TORQUE FRA STRØM + RPM -----
-
-  // elektrisk effekt inn i motor
-  float power_elec = voltage_V * (current_mA / 1000.0);
-
-  // trekk fra tomgangstap
-  float power_mech_motor = (power_elec - P_IDLE) * ETA_MOTOR;
-
-  // under tomgang → ingen torque-estimat
-  if (power_mech_motor <= 0.0) {
-    torque_est = 0.0;
-    return;
+  if (fabsf(torque_measured) < 0.0005f) {
+    torque_measured = 0.0f;
   }
 
-  float omega_motor = radPerSec;
+  omega_chuck = rpmChuck * 2.0f * PI / 60.0f;
 
-  // lav hastighet → modellen er ikke gyldig
-  if (fabs(omega_motor) < 30.0) {
-    torque_est = 0.0;
-    return;
-  }
+  power_mech = torque_measured * omega_chuck;
 
-  // -------- TRANSIENT-FILTER --------
-  // ignorer torque når rpm endrer seg raskt (hastighetsbytte / oppstart)
-  static float rpm_prev = 0.0;
-  float rpm_change = fabs(rpm - rpm_prev);
-  rpm_prev = rpm;
+  // ---- torque_est fra motorstrøm ----
 
-  if (rpm_change > 200.0) {
-    torque_est = 0.0;
-    return;
-  }
-  // ----------------------------------
+// current fra INA219 (allerede global i prosjektet)
+float current_A = current_mA / 1000.0f;
 
-  // moment på motorside
-  float torque_motor_est = power_mech_motor / omega_motor;
+// rpm-baserte tomgangstap
+float I0 = 0.00008f * rpm + 0.25f;
 
-  // moment på chuck etter gir
-  torque_est = torque_motor_est * GEAR_RATIO;
+// effektiv strøm som gir moment
+float I_eff = current_A - I0;
+if (I_eff < 0.0f) I_eff = 0.0f;
 
-  // spike-beskyttelse
-  if (torque_est > 20.0) {
-      torque_est = 20.0;
-  }
+// estimer moment på chuck
+torque_est = KT * I_eff * GEAR_RATIO;
+
 }
