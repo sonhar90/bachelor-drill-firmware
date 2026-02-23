@@ -22,7 +22,6 @@ long LoadCellHX711::readTared(uint8_t samples) {
   long sum = 0;
   for (uint8_t i = 0; i < samples; i++) {
     sum += scale.read();
-    delay(5);
   }
   long avg = sum / samples;
   return avg - offset_;
@@ -37,4 +36,18 @@ float LoadCellHX711::calibrateCountsPerGram(float knownWeightGrams, uint8_t samp
   long t = readTared(samples);
   if (knownWeightGrams == 0.0f) return 0.0f;
   return (float)t / knownWeightGrams;
+}
+
+// ===== REALTIME SAFE =====
+
+bool LoadCellHX711::isReady() {
+  return scale.is_ready();
+}
+
+float LoadCellHX711::readGramsNonBlocking(float countsPerGram) {
+  if (!scale.is_ready())
+    return NAN;
+
+  long value = scale.read() - offset_;
+  return (float)value / countsPerGram;
 }

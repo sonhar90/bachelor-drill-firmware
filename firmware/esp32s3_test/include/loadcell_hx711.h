@@ -12,6 +12,10 @@ public:
   float readGrams(float countsPerGram, uint8_t samples = 10);
   float calibrateCountsPerGram(float knownWeightGrams, uint8_t samples = 30);
 
+  // === NYE (realtime-safe) ===
+  bool isReady();
+  float readGramsNonBlocking(float countsPerGram);
+
 private:
   long offset_ = 0;
 };

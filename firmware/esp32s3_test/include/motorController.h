@@ -3,6 +3,7 @@
 
 extern float motorPercentage;
 extern int duty;
+extern uint32_t lastMotorChangeTime;
 
 void motorSetup();
 void motorForward();

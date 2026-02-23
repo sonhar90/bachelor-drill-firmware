@@ -1,16 +1,29 @@
 #include <Arduino.h>
-
 #include "encoderCode.h"
 #include "currentSens.h"
 #include "calculateTorqueFile.h"
 #include "motorController.h"
-#include "loadcell_hx711.h"
 #include "config.h"
 
-long loopTimer = 0;
+// ================= SETTINGS =================
 
-LoadCellHX711 loadcell;
-float countsPerGram = HX711_COUNTS_PER_GRAM;
+static constexpr uint32_t SAMPLE_PERIOD_MS = 50;
+static constexpr float MOTOR_FIXED_DUTY   = 0.60f;
+static constexpr float DUTY_STEP          = 0.05f;
+
+// ================= OVERLOAD =================
+
+static int  overloadCounter = 0;
+static bool overloadLatched = false;
+
+// ================= STATE =================
+
+uint32_t lastSample = 0;
+
+bool loggingActive = false;
+String currentFileName = "";
+
+// ================= SETUP =================
 
 void setup() {
   Serial.begin(115200);
@@ -20,77 +33,147 @@ void setup() {
   currentSetup();
   motorSetup();
 
-  loadcell.begin(PIN_HX711_DOUT, PIN_HX711_SCK);
-  loadcell.tare();
+  motorPercentage = 0.0f;
+  controlMotor();
 
-  // CSV HEADER – MÅ være første linje
-  Serial.println("time_ms,rpm_motor,rpm_chuck,current_A,voltage_V,grams,torque_measured_Nm,torque_est_Nm,omega_chuck,power_mech");
-
-
-
-  // Litt delay før tekst
-  delay(500);
-
-  Serial.println("PRONY TORQUE TEST MODE");
-  Serial.println("1 = low speed");
-  Serial.println("2 = medium");
-  Serial.println("3 = high");
-  Serial.println("s = stop");
+  Serial.println("READY");
+  Serial.println("file <name>");
+  Serial.println("start  -> start logging (motor OFF)");
+  Serial.println("w      -> motor ON (60%)");
+  Serial.println("s      -> motor OFF");
+  Serial.println("u      -> duty +5%");
+  Serial.println("d      -> duty -5%");
+  Serial.println("stop   -> stop logging");
 }
 
-void loop(){
+// ================= SERIAL HANDLER =================
 
-  // tastestyring
-  while (Serial.available()) {
-    char ch = Serial.read();
+void handleSerial()
+{
+  if (!Serial.available()) return;
 
-    if (ch == '1') motorPercentage = 0.25;
-    if (ch == '2') motorPercentage = 0.45;
-    if (ch == '3') motorPercentage = 0.70;
-    if (ch == 's') motorPercentage = 0.0;
+  String cmd = Serial.readStringUntil('\n');
+  cmd.trim();
+
+  if (cmd.startsWith("file "))
+  {
+    currentFileName = cmd.substring(5);
+    Serial.print("FILE SET: ");
+    Serial.println(currentFileName);
   }
 
-  if (millis() > (loopTimer + 50)){
+  else if (cmd == "start")
+  {
+    if (currentFileName.length() == 0)
+    {
+      Serial.println("ERROR: set filename first");
+      return;
+    }
+
+    loggingActive = true;
+
+    Serial.println("CSV_BEGIN");
+    Serial.println("t_ms,rpm_motor,rpm_chuck,current_mA,voltage_V,power_mW,torque_est");
+  }
+
+  else if (cmd == "w")
+  {
+    overloadLatched = false;        // tillat start igjen etter stopp
+    motorPercentage = MOTOR_FIXED_DUTY;
+    controlMotor();
+  }
+
+  else if (cmd == "s")
+  {
+    motorPercentage = 0.0f;
+    controlMotor();
+  }
+
+  else if (cmd == "u")
+  {
+    overloadLatched = false;
+    motorPercentage += DUTY_STEP;
+    if (motorPercentage > 0.95f) motorPercentage = 0.95f;
+    controlMotor();
+
+    Serial.print("DUTY: ");
+    Serial.println(motorPercentage, 2);
+  }
+
+  else if (cmd == "d")
+  {
+    overloadLatched = false;
+    motorPercentage -= DUTY_STEP;
+    if (motorPercentage < 0.0f) motorPercentage = 0.0f;
+    controlMotor();
+
+    Serial.print("DUTY: ");
+    Serial.println(motorPercentage, 2);
+  }
+
+  else if (cmd == "stop")
+  {
+    loggingActive = false;
+    Serial.println("CSV_END");
+  }
+}
+
+// ================= LOOP =================
+
+void loop()
+{
+  handleSerial();
+
+  uint32_t now = millis();
+
+  if (now - lastSample >= SAMPLE_PERIOD_MS)
+  {
+    lastSample = now;
 
     runEncoder();
     currentRead();
 
-    float grams = loadcell.readGrams(countsPerGram, 10);
+    // torque estimator (uten loadcell under drilling)
+    calculateTorqueMeasured(0.0f);
 
-    calculateTorqueMeasured(grams);
+    // -------- OVERLOAD DETECTION --------
 
-    // CSV DATA
-    Serial.print(millis());
-    Serial.print(",");
+    if (torque_est > TORQUE_LIMIT)
+        overloadCounter++;
+    else
+        overloadCounter = 0;
 
-    Serial.print(rpm);
-    Serial.print(",");
+    if (overloadCounter >= OVERLOAD_LIMIT_SAMPLES)
+    {
+        motorStop();                // BRÅSTOPP
+        overloadLatched = true;     // lås motor
+        overloadCounter = 0;
+    }
 
-    Serial.print(rpmChuck);
-    Serial.print(",");
+    // -------- LOGGING --------
 
-    Serial.print(current_mA/1000.0);
-    Serial.print(",");
+    if (loggingActive)
+    {
+      Serial.print(now);
+      Serial.print(",");
+      Serial.print(rpmMotor, 2);
+      Serial.print(",");
+      Serial.print(rpmChuck, 2);
+      Serial.print(",");
+      Serial.print(current_mA, 1);
+      Serial.print(",");
+      Serial.print(voltage_V, 2);
+      Serial.print(",");
+      Serial.print(power_mW, 0);
+      Serial.print(",");
+      Serial.println(torque_est, 4);
+    }
 
-    Serial.print(voltage_V);
-    Serial.print(",");
+    // -------- NORMAL MOTOR CONTROL --------
 
-    Serial.print(grams);
-    Serial.print(",");
-
-    Serial.print(torque_measured);
-    Serial.print(",");
-
-    Serial.print(torque_est);
-    Serial.print(",");
-    Serial.print(omega_chuck);
-    Serial.print(",");
-    Serial.println(power_mech);  // mekanisk effekt i W
-
-    
-
-
-    controlMotor();
-    loopTimer = millis();
+    if (!overloadLatched)
+    {
+        controlMotor();
+    }
   }
 }

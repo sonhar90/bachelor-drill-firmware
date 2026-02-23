@@ -3,56 +3,138 @@
 #include "calculateTorqueFile.h"
 #include "encoderCode.h"
 #include "currentSens.h"
+#include "config.h"
+#include "motorController.h"
 
-float torque_est = 0.0f;
-float torque_measured = 0.0f;
+// ======================================================
+// OUTPUT
+// ======================================================
+
+float torque_est       = 0.0f;
+float torque_measured  = 0.0f;
 
 float grams_f = 0.0f;
 float force_N = 0.0f;
 
 float omega_chuck = 0.0f;
-float power_mech = 0.0f;
+float power_mech  = 0.0f;
+
+float current_A = 0.0f;
+float I0_model  = 0.0f;
+float I_eff     = 0.0f;
+
+float KT_i       = 0.0f;
+float friction_i = 0.0f;
+float eta_i      = 0.0f;
+
+// ======================================================
+// FYSISKE PARAMETRE
+// ======================================================
 
 static constexpr float G = 9.81f;
 static constexpr float ARM_LENGTH = 0.05f;
 
-static constexpr float KT = 0.010f;
-static constexpr float GEAR_RATIO = 231.0f;
+static constexpr float KT_REAL     = 0.013f;
+static constexpr float ETA_TOTAL   = 0.82f;
 
+// ======================================================
+// I0-MODELL
+// ======================================================
+
+static constexpr float I0_A = 1.90f;
+static constexpr float I0_B = -0.000065f;
+
+// ======================================================
+// HOVEDFUNKSJON
+// ======================================================
 
 void calculateTorqueMeasured(float grams)
 {
-  // deadband for lastcelle
-  if (fabs(grams) < 10.0f) {   // < 5 gram = støy
-    grams = 0.0f;
-  }
+    if (millis() - lastMotorChangeTime < 150)
+    {
+    torque_est = 0;
+    return;
+    }
 
-  grams_f = grams;
+    if (rpmMotor < RPM_TORQUE_MIN)
+    {
+        torque_est = 0;
+        return;
+    }
 
-  force_N = (grams / 1000.0f) * G;
-  torque_measured = force_N * ARM_LENGTH;
+    if (!isfinite(rpmMotor)) rpmMotor = 0.0f;
+    if (!isfinite(rpmChuck)) rpmChuck = 0.0f;
 
-  if (fabsf(torque_measured) < 0.0005f) {
-    torque_measured = 0.0f;
-  }
+    // -------------------------
+    // MÅLT MOMENT
+    // -------------------------
 
-  omega_chuck = rpmChuck * 2.0f * PI / 60.0f;
+    grams_f = grams;
 
-  power_mech = torque_measured * omega_chuck;
+    force_N = (grams / 1000.0f) * G;
+    torque_measured = force_N * ARM_LENGTH;
 
-  // ---- torque_est fra motorstrøm ----
+    // -------------------------
+    // STRØM
+    // -------------------------
 
-// current fra INA219 (allerede global i prosjektet)
-float current_A = current_mA / 1000.0f;
+    current_A = max(0.0f, current_mA / 1000.0f);
+    if (!isfinite(current_A))
+{
+    torque_est = 0;
+    return;
+}
 
-// rpm-baserte tomgangstap
-float I0 = 0.00008f * rpm + 0.25f;
+    // -------------------------
+    // I0 fra rpmMotor
+    // -------------------------
 
-// effektiv strøm som gir moment
-float I_eff = current_A - I0;
-if (I_eff < 0.0f) I_eff = 0.0f;
+    float rpm_abs = fabs(rpmMotor);
 
-// estimer moment på chuck
-torque_est = KT * I_eff * GEAR_RATIO;
+    I0_model = I0_A + I0_B * rpm_abs;
 
+    // -------------------------
+    // Effektiv momentstrøm
+    // -------------------------
+
+    I_eff = current_A - I0_model;
+    if (I_eff < 0.0f)
+        I_eff = 0.0f;
+    if (I_eff > 30.0f) I_eff = 30.0f;
+
+    // -------------------------
+    // Motor-moment
+    // -------------------------
+
+    float torque_motor = KT_REAL * I_eff;
+
+    // -------------------------
+    // Moment på chuck
+    // -------------------------
+
+    torque_est =
+        torque_motor *
+        GEAR_RATIO *
+        ETA_TOTAL;
+
+    // -------------------------
+    // Mekanisk effekt
+    // -------------------------
+
+    omega_chuck = rpmChuck * 2.0f * PI / 60.0f;
+    power_mech  = torque_est * omega_chuck;
+
+    // -------------------------
+    // Diagnoseparametre
+    // -------------------------
+
+    //KT_i = (I_eff > 0.01f)
+    //    ? torque_motor / I_eff
+    //    : 0.0f;
+//
+ //   eta_i = (torque_motor > 0.001f)
+   //     ? torque_measured / (torque_motor * GEAR_RATIO)
+    //    : 0.0f;
+//
+  //  friction_i = torque_est - torque_measured;
 }
